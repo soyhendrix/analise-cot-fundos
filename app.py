@@ -453,7 +453,7 @@ def wasde_ui():
 
 @st.cache_data(ttl=86400)  # Cache for 1 day
 def fetch_cbot_prices(ticker, start_str, end_str):
-    """Fetches historical closing prices from Yahoo Finance.
+    """Fetches historical closing prices from Yahoo Finance using Ticker.history().
     
     Args:
         ticker: Yahoo Finance ticker (e.g. 'ZS=F')
@@ -462,30 +462,19 @@ def fetch_cbot_prices(ticker, start_str, end_str):
     """
     import warnings
     try:
-        # Use a standard requests session to avoid curl_cffi dependency issues on Streamlit Cloud
-        session = requests.Session()
-        session.verify = False
-        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True, session=session)
+            t = yf.Ticker(ticker)
+            data = t.history(start=start_str, end=end_str, auto_adjust=True)
         
         if data is None or data.empty:
             return pd.DataFrame()
         
-        # Handle MultiIndex columns (newer yfinance versions)
-        if isinstance(data.columns, pd.MultiIndex):
-            close_series = data['Close'].iloc[:, 0]  # First (and only) ticker
-        else:
-            close_series = data['Close']
-        
-        # Drop NaN values
-        close_series = close_series.dropna()
+        close_series = data['Close'].dropna()
         
         if close_series.empty:
             return pd.DataFrame()
         
-        # Create a clean dataframe
         price_df = pd.DataFrame({
             'Date': close_series.index,
             'Close': close_series.values
