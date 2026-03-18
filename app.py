@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import re
 from bs4 import BeautifulSoup
+import yfinance as yf
 
 # --- Configuration ---
 st.set_page_config(
@@ -29,6 +30,13 @@ TARGET_MARKET_SOY = "SOYBEANS - CHICAGO BOARD OF TRADE"
 TARGET_MARKET_CORN = "CORN - CHICAGO BOARD OF TRADE"
 TARGET_MARKET_SOY_OIL = "SOYBEAN OIL - CHICAGO BOARD OF TRADE"
 TARGET_MARKET_SOY_MEAL = "SOYBEAN MEAL - CHICAGO BOARD OF TRADE"
+
+MARKET_TO_TICKER = {
+    TARGET_MARKET_SOY: "ZS=F",
+    TARGET_MARKET_CORN: "ZC=F",
+    TARGET_MARKET_SOY_OIL: "ZL=F",
+    TARGET_MARKET_SOY_MEAL: "ZM=F"
+}
 
 # --- Data Loading (CFTC) ---
 @st.cache_data
@@ -443,6 +451,51 @@ def wasde_ui():
     render_section("Estoque Final Global", rows_world_stocks)
     render_section("Produção América do Sul", rows_sa_prod)
 
+@st.cache_data(ttl=86400)  # Cache for 1 day
+def fetch_cbot_prices(ticker, start_str, end_str):
+    """Fetches historical closing prices from Yahoo Finance.
+    
+    Args:
+        ticker: Yahoo Finance ticker (e.g. 'ZS=F')
+        start_str: Start date as 'YYYY-MM-DD' string
+        end_str: End date as 'YYYY-MM-DD' string
+    """
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True)
+        
+        if data is None or data.empty:
+            return pd.DataFrame()
+        
+        # Handle MultiIndex columns (newer yfinance versions)
+        if isinstance(data.columns, pd.MultiIndex):
+            close_series = data['Close'].iloc[:, 0]  # First (and only) ticker
+        else:
+            close_series = data['Close']
+        
+        # Drop NaN values
+        close_series = close_series.dropna()
+        
+        if close_series.empty:
+            return pd.DataFrame()
+        
+        # Create a clean dataframe
+        price_df = pd.DataFrame({
+            'Date': close_series.index,
+            'Close': close_series.values
+        })
+        price_df['Date'] = pd.to_datetime(price_df['Date'])
+        
+        # Remove timezone info if present
+        if price_df['Date'].dt.tz is not None:
+            price_df['Date'] = price_df['Date'].dt.tz_localize(None)
+        
+        return price_df
+    except Exception:
+        return pd.DataFrame()
+
 def render_cot_dashboard(raw_df, market_name, market_label, sma_period):
     """
     Renders the COT dashboard for a specific market.
@@ -496,16 +549,56 @@ def render_cot_dashboard(raw_df, market_name, market_label, sma_period):
     fig_main.add_trace(go.Scatter(x=df['Date'], y=sma_green, name=f'SMA {sma_period} (↑)', line=dict(color='lime', width=2), mode='lines', connectgaps=False))
     fig_main.add_trace(go.Scatter(x=df['Date'], y=sma_red, name=f'SMA {sma_period} (↓)', line=dict(color='red', width=2), mode='lines', connectgaps=False))
 
-    fig_main.update_layout(
-        title=f"Net Position (Managed Money) - {market_label}",
-        yaxis_title="Contracts",
+    # --- Fetch and Plot CBOT Prices ---
+    ticker = MARKET_TO_TICKER.get(market_name)
+    has_prices = False
+    
+    if ticker:
+        # Get min and max dates from COT data as strings for caching
+        start_date = df['Date'].min().strftime('%Y-%m-%d')
+        end_date = (df['Date'].max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        price_df = fetch_cbot_prices(ticker, start_date, end_date)
+        
+        if not price_df.empty:
+            has_prices = True
+            
+            # Merge to align dates for hover (optional, but good for unified hover)
+            # However, plotly x unified hover handles separate traces automatically if x-axis matches.
+            
+            fig_main.add_trace(go.Scatter(
+                x=price_df['Date'],
+                y=price_df['Close'],
+                name=f'Price ({ticker})',
+                mode='lines',
+                line=dict(color='navy', width=2.5),
+                yaxis='y2' # Assign to secondary y-axis
+            ))
+
+    # Set up layout for secondary y-axis
+    layout_update = dict(
+        title=f"Net Position (Managed Money) & CBOT Price - {market_label}",
         xaxis_title="Date",
         hovermode="x unified",
         showlegend=False,
-        yaxis=dict(dtick=50000),
+        yaxis=dict(
+            title="Contracts",
+            dtick=50000,
+            side='left'
+        ),
         xaxis=dict(hoverformat='%d/%m/%Y'),
         height=500
     )
+    
+    if has_prices:
+        layout_update['yaxis2'] = dict(
+            title="Price",
+            side='right',
+            overlaying='y',
+            showgrid=False # Don't conflict with main grid lines
+        )
+        
+    fig_main.update_layout(**layout_update)
     
     config = {'toImageButtonOptions': {'format': 'png','filename': f'cot_{market_label}','height': 1080,'width': 1920,'scale': 2},'displaylogo': False}
     st.plotly_chart(fig_main, use_container_width=True, config=config)

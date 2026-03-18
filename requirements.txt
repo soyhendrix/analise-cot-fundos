@@ -6,3 +6,4 @@ openpyxl
 xlrd
 beautifulsoup4
 lxml
+yfinance
