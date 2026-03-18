@@ -462,9 +462,13 @@ def fetch_cbot_prices(ticker, start_str, end_str):
     """
     import warnings
     try:
+        # Use a standard requests session to avoid curl_cffi dependency issues on Streamlit Cloud
+        session = requests.Session()
+        session.verify = False
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True)
+            data = yf.download(ticker, start=start_str, end=end_str, progress=False, auto_adjust=True, session=session)
         
         if data is None or data.empty:
             return pd.DataFrame()
