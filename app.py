@@ -39,10 +39,22 @@ MARKET_TO_TICKER = {
 }
 
 # --- Data Loading (CFTC) ---
+# Alternative URL for current year (year-to-date file)
+BASE_URL_CURRENT = "https://www.cftc.gov/files/dea/history/com_disagg_txt_{}.zip"
+ALTERNATE_URL = "https://www.cftc.gov/files/dea/history/com_disagg_fut_txt.zip"
+
 @st.cache_data
 def load_data(years):
     """Downloads and parses CFTC COT data for selected years."""
+    import zipfile
     all_data = []
+    
+    target_markets = [
+        TARGET_MARKET_SOY, 
+        TARGET_MARKET_CORN,
+        TARGET_MARKET_SOY_OIL,
+        TARGET_MARKET_SOY_MEAL
+    ]
     
     for year in years:
         url = BASE_URL.format(year)
@@ -50,28 +62,26 @@ def load_data(years):
             response = requests.get(url, verify=False)
             response.raise_for_status()
             
-            with io.BytesIO(response.content) as zip_buffer:
-                import zipfile
-                with zipfile.ZipFile(zip_buffer) as z:
-                    file_name = z.namelist()[0]
-                    with z.open(file_name) as f:
-                        df = pd.read_csv(f, low_memory=False)
-                        df.columns = df.columns.str.strip()
-                        
-                        if 'Market_and_Exchange_Names' in df.columns:
-                             # Filter for target markets
-                             target_markets = [
-                                 TARGET_MARKET_SOY, 
-                                 TARGET_MARKET_CORN,
-                                 TARGET_MARKET_SOY_OIL,
-                                 TARGET_MARKET_SOY_MEAL
-                             ]
-                             df = df[df['Market_and_Exchange_Names'].str.strip().isin(target_markets)].copy()
-                        
-                        all_data.append(df)
-                        
-        except Exception as e:
-            st.error(f"Error loading data for {year}: {e}")
+            zip_bytes = io.BytesIO(response.content)
+            with zipfile.ZipFile(zip_bytes) as z:
+                file_name = z.namelist()[0]
+                csv_bytes = io.BytesIO(z.read(file_name))
+                
+            df = pd.read_csv(csv_bytes, low_memory=False)
+            
+            if df.empty or df.shape[1] < 2:
+                continue
+                
+            df.columns = df.columns.str.strip()
+            
+            if 'Market_and_Exchange_Names' in df.columns:
+                df = df[df['Market_and_Exchange_Names'].str.strip().isin(target_markets)].copy()
+            
+            if not df.empty:
+                all_data.append(df)
+                
+        except Exception:
+            # Silently skip years that can't be loaded
             continue
             
     if not all_data:
