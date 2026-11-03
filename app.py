@@ -557,7 +557,6 @@ def render_cot_dashboard(raw_df, market_name, market_label, sma_period):
     has_prices = False
     
     if ticker:
-        # Get min and max dates from COT data as strings for caching
         start_date = df['Date'].min().strftime('%Y-%m-%d')
         end_date = (df['Date'].max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         
